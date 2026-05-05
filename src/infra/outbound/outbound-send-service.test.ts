@@ -596,7 +596,7 @@ describe("executeSendAction", () => {
     );
   });
 
-  it("routes prepared plugin send payloads through core durable delivery", async () => {
+  it("routes prepared plugin send payloads through core best-effort delivery by default", async () => {
     const prepareSendPayload = vi.fn(({ payload }) => ({
       ...payload,
       channelData: { prepared: true },
@@ -634,8 +634,50 @@ describe("executeSendAction", () => {
     expect(mocks.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "discord",
-        queuePolicy: "required",
+        queuePolicy: "best_effort",
         payloads: [expect.objectContaining({ channelData: { prepared: true } })],
+      }),
+    );
+  });
+
+  it("uses required core delivery only when the send action opts out of best-effort", async () => {
+    const prepareSendPayload = vi.fn(({ payload }) => ({
+      ...payload,
+      channelData: { prepared: true },
+    }));
+    const plugin: ChannelPlugin = {
+      ...createChannelTestPluginBase({ id: "discord" }),
+      actions: {
+        describeMessageTool: () => ({ actions: ["send"] }),
+        prepareSendPayload,
+        handleAction: async () => ({ content: [], details: { ok: true } }),
+      },
+      outbound: { deliveryMode: "direct" },
+    };
+    setActivePluginRegistry(createTestRegistry([{ pluginId: "discord", plugin, source: "test" }]));
+    mocks.sendMessage.mockResolvedValue({
+      channel: "discord",
+      to: "channel:123",
+      via: "direct",
+      mediaUrl: null,
+    });
+
+    await executeSendAction({
+      ctx: {
+        cfg: {},
+        channel: "discord",
+        params: { to: "channel:123", message: "hello" },
+        dryRun: false,
+      },
+      to: "channel:123",
+      message: "hello",
+      bestEffort: false,
+    });
+
+    expect(mocks.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "discord",
+        queuePolicy: "required",
       }),
     );
   });

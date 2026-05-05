@@ -206,6 +206,7 @@ export async function executeSendAction(params: {
     mediaUrls: params.mediaUrls,
     audioAsVoice: params.asVoice === true,
   };
+  const queuePolicy = params.bestEffort === false ? "required" : "best_effort";
   const preparedPayload = await tryPreparePluginSendPayload({
     ctx: params.ctx,
     to: params.to,
@@ -238,7 +239,7 @@ export async function executeSendAction(params: {
       forceDocument: params.forceDocument,
       dryRun: params.ctx.dryRun,
       bestEffort: params.bestEffort ?? undefined,
-      queuePolicy: "required",
+      queuePolicy,
       deps: params.ctx.deps,
       gateway: params.ctx.gateway,
       mirror: params.ctx.mirror,
@@ -303,7 +304,7 @@ export async function executeSendAction(params: {
     forceDocument: params.forceDocument,
     dryRun: params.ctx.dryRun,
     bestEffort: params.bestEffort ?? undefined,
-    queuePolicy: "required",
+    queuePolicy,
     deps: params.ctx.deps,
     gateway: params.ctx.gateway,
     mirror: params.ctx.mirror,

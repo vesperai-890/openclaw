@@ -72,10 +72,13 @@ export function resolveDurableInboundReplyToId(
   );
 }
 
-function resolveThreadId(
+function resolveDurableInboundReplyThreadId(
   params: DurableInboundReplyDeliveryParams,
 ): string | number | null | undefined {
-  return params.threadId ?? params.ctxPayload.MessageThreadId;
+  if ("threadId" in params) {
+    return params.threadId;
+  }
+  return params.ctxPayload.MessageThreadId;
 }
 
 function stringifyThreadId(value: string | number | null | undefined): string | undefined {
@@ -124,7 +127,7 @@ export async function deliverInboundReplyWithMessageSendContext(
   }
 
   const replyToId = resolveDurableInboundReplyToId(params);
-  const threadId = resolveThreadId(params);
+  const threadId = resolveDurableInboundReplyThreadId(params);
   const requiredCapabilities = {
     ...(params.requiredCapabilities ??
       deriveDurableFinalDeliveryRequirements({

@@ -1,4 +1,5 @@
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
+import { deriveDurableFinalDeliveryRequirements } from "../../channels/message/capabilities.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { OutboundMediaAccess } from "../../media/load-options.js";
 import type { PollInput } from "../../polls.js";
@@ -13,6 +14,8 @@ import { resolveOutboundChannelPlugin } from "./channel-resolution.js";
 import { resolveMessageChannelSelection } from "./channel-selection.js";
 import {
   deliverOutboundPayloads,
+  resolveOutboundDurableFinalDeliverySupport,
+  type DurableFinalDeliveryRequirements,
   type OutboundDeliveryResult,
   type OutboundDeliveryQueuePolicy,
   type OutboundSendDeps,
@@ -183,6 +186,76 @@ function resolveRequiredPlugin(channel: string, cfg: OpenClawConfig) {
   return plugin;
 }
 
+function payloadRequiresDurablePayloadTransport(payload: ReplyPayload): boolean {
+  return (
+    payload.presentation !== undefined ||
+    payload.delivery !== undefined ||
+    payload.interactive !== undefined ||
+    (payload.channelData !== undefined && Object.keys(payload.channelData).length > 0)
+  );
+}
+
+function mergeDurableRequirements(
+  target: DurableFinalDeliveryRequirements,
+  source: DurableFinalDeliveryRequirements,
+): DurableFinalDeliveryRequirements {
+  for (const [capability, required] of Object.entries(source) as Array<
+    [keyof DurableFinalDeliveryRequirements, boolean | undefined]
+  >) {
+    if (required === true) {
+      target[capability] = true;
+    }
+  }
+  return target;
+}
+
+function deriveRequiredMessageSendCapabilities(params: {
+  payloads: ReplyPayload[];
+  replyToId?: string | null;
+  threadId?: string | number | null;
+  silent?: boolean;
+}): DurableFinalDeliveryRequirements {
+  const requirements: DurableFinalDeliveryRequirements = { reconcileUnknownSend: true };
+  for (const payload of params.payloads) {
+    mergeDurableRequirements(
+      requirements,
+      deriveDurableFinalDeliveryRequirements({
+        payload,
+        replyToId: params.replyToId,
+        threadId: params.threadId,
+        silent: params.silent,
+        payloadTransport: payloadRequiresDurablePayloadTransport(payload),
+        batch: params.payloads.length > 1,
+        reconcileUnknownSend: true,
+      }),
+    );
+  }
+  return requirements;
+}
+
+async function assertRequiredMessageSendDurability(params: {
+  cfg: OpenClawConfig;
+  channel: Exclude<string, "none">;
+  payloads: ReplyPayload[];
+  replyToId?: string | null;
+  threadId?: string | number | null;
+  silent?: boolean;
+}): Promise<void> {
+  const support = await resolveOutboundDurableFinalDeliverySupport({
+    cfg: params.cfg,
+    channel: params.channel,
+    requirements: deriveRequiredMessageSendCapabilities(params),
+  });
+  if (support.ok) {
+    return;
+  }
+  const suffix =
+    support.reason === "capability_mismatch" && support.capability
+      ? `missing ${support.capability}`
+      : support.reason;
+  throw new Error(`Required durable message send is unsupported for ${params.channel}: ${suffix}`);
+}
+
 function resolveGatewayOptions(opts?: MessageGatewayOptions) {
   // Security: backend callers (tools/agents) must not accept user-controlled gateway URLs.
   // Use config-derived gateway target only.
@@ -296,6 +369,16 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
       requesterSenderUsername: params.requesterSenderUsername,
       requesterSenderE164: params.requesterSenderE164,
     });
+    if (params.queuePolicy === "required") {
+      await assertRequiredMessageSendDurability({
+        cfg,
+        channel: outboundChannel,
+        payloads: normalizedPayloads,
+        replyToId: params.replyToId,
+        threadId: params.threadId,
+        silent: params.silent,
+      });
+    }
     const results = await deliverOutboundPayloads({
       cfg,
       channel: outboundChannel,

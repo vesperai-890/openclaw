@@ -152,6 +152,13 @@ The outbound adapter then reads `payload.channelData.demo` inside `sendPayload`.
 This keeps platform-specific rendering in the plugin while core still owns
 persist, retry, recover, hooks, and ack.
 
+Prepared `message(action="send")` payloads use core delivery with best-effort
+queueing by default. Required durable queueing is only valid after core verifies
+the channel can reconcile a send whose outcome is unknown after a crash. If the
+adapter cannot implement `reconcileUnknownSend`, keep the prepared send path
+best-effort; core will still try the write-ahead queue, but queue persistence or
+uncertain crash recovery is not part of the required delivery contract.
+
 ## Durable Final Capabilities
 
 Durable final delivery is opt in per side effect. Core will only use generic
@@ -209,9 +216,10 @@ A durable final send has stricter semantics than legacy channel-owned delivery:
 - Treat `unsupported` as a pre-intent result only.
 - For required durability, fail before platform I/O if the queue cannot record
   that platform send has started.
-- For required final delivery, preflight `reconcileUnknownSend`; recovery must
-  be able to ack an already-sent message or replay only after the adapter proves
-  the original send did not happen.
+- For required final delivery and required prepared message-tool sends,
+  preflight `reconcileUnknownSend`; recovery must be able to ack an
+  already-sent message or replay only after the adapter proves the original send
+  did not happen.
 - For `best_effort`, queue write failures may fall back to direct platform I/O.
 - Forward abort signals to media loading and platform sends.
 - Run after-commit hooks after queue ack; direct best-effort fallback runs them

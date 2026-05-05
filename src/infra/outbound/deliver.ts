@@ -263,11 +263,17 @@ async function runChannelMessageSendWithLifecycle<
         : {}),
     };
   } catch (error: unknown) {
-    await params.lifecycle.afterSendFailure?.({
-      ...params.ctx,
-      error,
-      ...(attemptToken !== undefined ? { attemptToken } : {}),
-    });
+    try {
+      await params.lifecycle.afterSendFailure?.({
+        ...params.ctx,
+        error,
+        ...(attemptToken !== undefined ? { attemptToken } : {}),
+      });
+    } catch (cleanupError: unknown) {
+      log.warn(
+        `channel message send failure cleanup failed; preserving original send error: ${formatErrorMessage(cleanupError)}`,
+      );
+    }
     throw error;
   }
 }

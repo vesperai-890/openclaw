@@ -1,10 +1,12 @@
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
+import { formatErrorMessage } from "../../infra/errors.js";
 import type { OutboundDeliveryResult } from "../../infra/outbound/deliver-types.js";
 import {
   deliverOutboundPayloads,
   type DeliverOutboundPayloadsParams,
   type OutboundDeliveryIntent,
 } from "../../infra/outbound/deliver.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { createLiveMessageState, markLiveMessagePreviewUpdated } from "./live.js";
 import { createMessageReceiptFromOutboundResults } from "./receipt.js";
 import { createRenderedMessageBatch } from "./rendered-batch.js";
@@ -16,6 +18,8 @@ import type {
   MessageSendContext,
   RenderedMessageBatch,
 } from "./types.js";
+
+const log = createSubsystemLogger("channels/message/send");
 
 export type DurableMessageBatchSendParams = Omit<
   DeliverOutboundPayloadsParams,
@@ -184,7 +188,13 @@ export async function withDurableMessageSendContext<T>(
       await onCommitReceipt?.(receipt);
     },
     fail: async (error) => {
-      await onSendFailure?.(error);
+      try {
+        await onSendFailure?.(error);
+      } catch (cleanupError: unknown) {
+        log.warn(
+          `message send failure cleanup failed; preserving original send error: ${formatErrorMessage(cleanupError)}`,
+        );
+      }
     },
   };
 

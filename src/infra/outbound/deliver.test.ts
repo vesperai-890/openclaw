@@ -758,6 +758,64 @@ describe("deliverOutboundPayloads", () => {
     );
   });
 
+  it("preserves native send errors when failure cleanup throws", async () => {
+    const messageSendText = vi.fn(async () => {
+      throw new Error("native send failed");
+    });
+    const afterSendFailure = vi.fn(async () => {
+      throw new Error("cleanup failed");
+    });
+    setActivePluginRegistry(
+      createTestRegistry([
+        {
+          pluginId: "matrix",
+          source: "test",
+          plugin: {
+            id: "matrix",
+            message: {
+              id: "matrix",
+              durableFinal: {
+                capabilities: {
+                  text: true,
+                  afterSendSuccess: true,
+                },
+              },
+              send: {
+                lifecycle: {
+                  beforeSendAttempt: () => "pending-2",
+                  afterSendFailure,
+                },
+                text: messageSendText,
+              },
+            },
+          },
+        },
+      ]),
+    );
+
+    await expect(
+      deliverOutboundPayloads({
+        cfg: {},
+        channel: "matrix",
+        to: "!room:example",
+        payloads: [{ text: "hello" }],
+        queuePolicy: "required",
+      }),
+    ).rejects.toThrow("native send failed");
+
+    expect(afterSendFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "text",
+        attemptToken: "pending-2",
+        error: expect.any(Error),
+      }),
+    );
+    expect(queueMocks.failDelivery).toHaveBeenCalledWith(
+      "mock-queue-id",
+      expect.stringContaining("native send failed"),
+    );
+  });
+
   it("requires durable queue writes when requested", async () => {
     queueMocks.enqueueDelivery.mockRejectedValueOnce(new Error("queue offline"));
     const sendMatrix = vi.fn().mockResolvedValue({ messageId: "m1" });

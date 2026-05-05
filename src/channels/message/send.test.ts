@@ -350,10 +350,53 @@ describe("withDurableMessageSendContext", () => {
     expect(onSendFailure).toHaveBeenCalledWith(error);
   });
 
+  it("preserves orchestration errors when the failure hook throws", async () => {
+    const onSendFailure = vi.fn(async () => {
+      throw new Error("cleanup failed");
+    });
+    const error = new Error("boom");
+
+    await expect(
+      withDurableMessageSendContext(
+        {
+          cfg,
+          channel: "telegram",
+          to: "chat-1",
+          payloads: [{ text: "hello" }],
+          onSendFailure,
+        },
+        async () => {
+          throw error;
+        },
+      ),
+    ).rejects.toThrow("boom");
+
+    expect(onSendFailure).toHaveBeenCalledWith(error);
+  });
+
   it("runs the failure hook when durable outbound delivery fails", async () => {
     const error = new Error("send failed");
     deliverOutboundPayloads.mockRejectedValueOnce(error);
     const onSendFailure = vi.fn();
+
+    const result = await sendDurableMessageBatch({
+      cfg,
+      channel: "telegram",
+      to: "chat-1",
+      payloads: [{ text: "hello" }],
+      onSendFailure,
+    });
+
+    expect(result).toEqual({ status: "failed", error });
+    expect(onSendFailure).toHaveBeenCalledWith(error);
+  });
+
+  it("preserves failed send results when the failure hook throws", async () => {
+    const error = new Error("send failed");
+    deliverOutboundPayloads.mockRejectedValueOnce(error);
+    const onSendFailure = vi.fn(async () => {
+      throw new Error("cleanup failed");
+    });
 
     const result = await sendDurableMessageBatch({
       cfg,
