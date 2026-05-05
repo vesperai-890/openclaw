@@ -265,6 +265,61 @@ describe("delivery-queue recovery", () => {
     expect(await loadPendingDeliveries(tmpDir())).toHaveLength(0);
   });
 
+  it("records retry state when acking a reconciled sent entry fails", async () => {
+    const id = await enqueueDelivery(
+      { channel: "demo-channel-a", to: "+1", payloads: [{ text: "maybe sent" }] },
+      tmpDir(),
+    );
+    setQueuedEntryState(tmpDir(), id, {
+      retryCount: 0,
+      platformSendStartedAt: Date.now(),
+      recoveryState: "unknown_after_send",
+    });
+    loadChannelMessageAdapterMock.mockResolvedValue({
+      durableFinal: {
+        capabilities: { reconcileUnknownSend: true },
+        reconcileUnknownSend: vi.fn().mockResolvedValue({
+          status: "sent",
+          messageId: "platform-1",
+          receipt: {
+            primaryPlatformMessageId: "platform-1",
+            platformMessageIds: ["platform-1"],
+            parts: [{ platformMessageId: "platform-1", kind: "text", index: 0 }],
+            sentAt: 1,
+          },
+        }),
+      },
+    });
+    const renameSpy = vi
+      .spyOn(fs.promises, "rename")
+      .mockRejectedValueOnce(Object.assign(new Error("ack denied"), { code: "EACCES" }));
+
+    try {
+      const deliver = vi.fn().mockResolvedValue([]);
+      const log = createRecoveryLog();
+      const { result } = await runRecovery({ deliver, log });
+
+      expect(deliver).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        recovered: 0,
+        failed: 1,
+        skippedMaxRetries: 0,
+        deferredBackoff: 0,
+      });
+      const entries = await loadPendingDeliveries(tmpDir());
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.id).toBe(id);
+      expect(entries[0]?.retryCount).toBe(1);
+      expect(entries[0]?.lastError).toContain("failed to ack reconciled sent delivery");
+      expect(entries[0]?.lastError).toContain("ack denied");
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to ack reconciled sent delivery"),
+      );
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
   it("replays unknown-after-send entries only after adapter proves they were not sent", async () => {
     const id = await enqueueDelivery(
       { channel: "demo-channel-a", to: "+1", payloads: [{ text: "not sent" }] },

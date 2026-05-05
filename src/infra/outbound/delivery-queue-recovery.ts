@@ -271,6 +271,17 @@ async function drainQueuedEntry(opts: {
         if (getErrnoCode(ackErr) === "ENOENT") {
           return "already-gone";
         }
+        const errMsg = `failed to ack reconciled sent delivery: ${formatErrorMessage(ackErr)}`;
+        opts.log.warn(`Delivery entry ${entry.id} ${errMsg}`);
+        opts.onFailed?.(entry, errMsg);
+        try {
+          await failDelivery(entry.id, errMsg, opts.stateDir);
+          return "failed";
+        } catch (failErr) {
+          if (getErrnoCode(failErr) === "ENOENT") {
+            return "already-gone";
+          }
+        }
         return "failed";
       }
     }
